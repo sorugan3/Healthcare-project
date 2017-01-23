@@ -1,0 +1,104 @@
+H1 <- read.csv(file.choose(),header = T, sep = ',', na.strings = c(""," ","NA"))
+#reading in data and replacing blank spaces with NA's
+
+H1$Date.of.stroke <- as.character(H1$Date.of.stroke)
+#converting date into a character to replace them with 1's and 0's
+H1$Date.of.stroke[is.na(H1$Date.of.stroke)] <- 0
+H1$Miocardial.infarction.Date.1 <- as.character(H1$Miocardial.infarction.Date.1)
+H1$Miocardial.infarction.Date.1[is.na(H1$Miocardial.infarction.Date.1)] <- 0
+H1$Miocardial.infarction.Date.2 <- as.character(H1$Miocardial.infarction.Date.2)
+H1$Miocardial.infarction.Date.2[is.na(H1$Miocardial.infarction.Date.2)] <- 0
+
+#writing a loop to convert into binary format.
+for (j in 2:4) {
+  for (i in 1:1746 ) {
+  if(H1[i,j] == 0){
+    H1[i,j] <- 0
+  } else{
+   H1[i,j] <- 1 
+   }
+  i = i+1
+  }
+  j = j+1
+}  
+
+fix(H1) # viweing the data
+
+H1$Total.count_Miocardial.infarction <- as.numeric(H1$Miocardial.infarction.Date.1) + as.numeric(H1$Miocardial.infarction.Date.2)
+#Creating a new variable to replace the faulty old variable
+H1 <- H1[c(1:4, 24, 5:23)] #moving the new variable
+H1$Total.count.of.Miocardial.infarction <- NULL #removing the old variable with mistakes
+H2 <- na.omit(H1)
+library(Amelia)
+missmap(H1, main= "missing values plot")
+
+#RECODING THE VARIABLES:
+H2$Smoking.group<- recode(H2$Smoking.group, "0='A';1:4='B';5:8='C'")
+H2$Social.class<- recode(H2$Social.class, "1:3='H';4:7='L'")
+H2$Marital.status<- recode(H2$Marital.status, "1='M';2:5='N'")
+H2$Employment.status<- recode(H2$Employment.status, "1:2='E';3:5='U'")
+H2$Leisure.activity<- recode(H2$Leisure.activity, "0='F';1:2='A'")
+
+#converting character classes into factors
+H2[sapply(H2, is.character)] <- lapply(H2[sapply(H2, is.character)], as.factor)
+H2$Diabetes.status.at.start <- as.factor(H2$Diabetes.status.at.start)
+H2$Depression <- as.factor(H2$Depression)
+
+H3 <- sapply(H2 , is.numeric)
+H4 <- H2[,H3]
+H5 <- as.data.frame(cor(H4))
+H5[upper.tri(H5, diag=T)] = 0
+
+H7 <- H2
+data.new <- H4[,!apply(H5,2,function(x) any(x > 0.85))] #removing variables with correlation >0.85
+
+H7 <- sapply(H2,is.factor) #only categorical variables in the data
+H8 <- H2[,H7] 
+H9 <- cbind(data.new, H8) # new data set after removing multicollinearity
+
+H6 <- H9[,-c(1,14,15)] # single output variable, removed second response variable for univariate analysis.
+
+# subsetting the data to create train and test data (train = 0.75 * nrow(H6))
+smp_size <- floor(0.75 * nrow(H9))
+set.seed(123)
+train_ind <- sample(seq_len(nrow(H9)), size = smp_size)
+train <- H6[train_ind, ]
+test <- H6[-train_ind, ]
+
+model <- glm(Date.of.stroke ~ . , family = binomial(link="logit") , data=train)
+# predicting on test data based on training model
+fitted.results <- predict(model,newdata=subset(test,select=-c(12)),type='response')
+#since this is probability, anything >0.5 is considered 1; <0.5 is considered 0
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+#mean of the misclassified instances
+misClasificError <- mean(fitted.results != test$Date.of.stroke)
+#Calculating the accuracy.
+print(paste('Accuracy',1-misClasificError))
+
+#ANALYZING OUTPUT 2 USING DATA MINING TECHNIQUES
+
+H10 <- H9[,-c(13,14,15)] #removing first output and other unnecessary variables.
+
+# subsetting the data to create train and test data (train = 0.75 * nrow(H6))
+H10$Total.count_Miocardial.infarction <- as.factor(H10$Total.count_Miocardial.infarction)
+smp_size <- floor(0.75 * nrow(H9))
+set.seed(123)
+train_ind <- sample(seq_len(nrow(H9)), size = smp_size)
+train1 <- H10[train_ind, ]
+test1 <- H10[-train_ind, ]
+#calcutating the proportions of each value in the output
+table(H10$Total.count_Miocardial.infarction)/nrow(H10)
+#Checking if the test and the train data sets have similar ratios in the output.
+table(train1$Total.count_Miocardial.infarction)/nrow(train1)
+table(test1$Total.count_Miocardial.infarction)/nrow(test1)
+#Fitting a random forest model
+ftr <- randomForest(as.factor(train1$Total.count_Miocardial.infarction) ~ ., data=train1, importance=TRUE, ntree=100)
+
+#predicting the response in train based on the model built.
+train1$predicted.response <- predict(ftr, train1)
+#confusion matrix to check the accuracy of the prediction
+confusionMatrix(data = train1$predicted.response, reference = train1$Total.count_Miocardial.infarction, positive = 'yes')
+#prediction on the test data set
+test1$predict <- predict(ftr, test1)
+#accuracy of the prediction
+confusionMatrix(data=test1$predict, reference=test1$Total.count_Miocardial.infarction,positive='yes')
